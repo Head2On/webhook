@@ -1,5 +1,5 @@
 # Build and runtime stage for HookRelay
-FROM python:3.14.8-slim AS runtime
+FROM python:3.14.10-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -20,12 +20,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 COPY pyproject.toml uv.lock .python-version ./
 
 # Install dependencies using frozen lockfile in isolated venv without dev packages
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application source and migrations
 COPY app/ app/
 COPY migrations/ migrations/
 COPY alembic.ini README.md ./
+
+# Install the application
+RUN uv sync --frozen --no-dev
 
 # Create non-privileged user and switch
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

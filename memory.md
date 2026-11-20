@@ -40,7 +40,7 @@ Every requirement set forth in `odin.md` (Updated Odin Review & Anna Requirement
 |---|---|:---:|---|
 | **1** | **Exact Dependency Pinning** | **APPLIED** | • Every direct dependency in `pyproject.toml` is pinned with exact `==` versions.<br>• Every dev dependency is pinned with exact `==` versions.<br>• `uv.lock` is committed and validated.<br>• `uv sync --frozen` runs cleanly with 0 errors. |
 | **2** | **PostgreSQL Test Isolation** | **APPLIED** | • Dedicated `TEST_DATABASE_URL` environment variable support.<br>• Strict safety check `validate_test_database_target()` in `tests/conftest.py` prohibits tests running against databases without `"test"` in the name.<br>• Repeatable migration lifecycle test (`test_alembic_migrations_lifecycle`).<br>• Automated cleanup of `_m0_baseline_marker` and `alembic_version` tables.<br>• Verified consecutive test execution (both passed).<br>• Verified concurrent test execution against isolated worker databases (both passed). |
-| **3** | **Python Runtime Consistency** | **APPLIED** | • `.python-version` set to `3.14`.<br>• `pyproject.toml` `requires-python` set to `>=3.14,<3.15`.<br>• `Dockerfile` pinned to base image `python:3.14.8-slim AS runtime`.<br>• Execution verified on Python 3.14.8. |
+| **3** | **Python Runtime Consistency** | **APPLIED** | • `.python-version` set to `3.14`.<br>• `pyproject.toml` `requires-python` set to `>=3.14,<3.15`.<br>• `Dockerfile` pinned to base image `python:3.14.10-slim`.<br>• Built image `hookrelay-m0` verified on Python 3.14.10. |
 | **4** | **Baseline Migration Verification** | **APPLIED** | • `migrations/versions/0001_initial_baseline.py` contains only the `_m0_baseline_marker` verification table.<br>• Zero business entities or tables created. |
 | **5** | **Environment Credential Verification** | **APPLIED** | • `.env.example` contains only placeholder values (`postgres:postgres`, safe URLs).<br>• Real secrets reside exclusively in local `.env`, which is strictly gitignored.<br>• No secrets committed to git. |
 | **6** | **Scope Verification (Zero M1)** | **APPLIED** | • `git grep -i -E "idempotency\|delivery\|dlq\|tenant\|event\|webhook" app/ migrations/` confirms NO business logic has been introduced.<br>• Matches are solely application description metadata and standard `asyncio` event loop comments.<br>• No tenant management, event ingestion, delivery workers, or HMAC signing. |
@@ -104,6 +104,27 @@ app/main.py:        description="High-performance webhook delivery engine",
 migrations/env.py:        # When running inside an existing asyncio event loop (e.g. pytest-asyncio),
 ```
 *Result: Only service metadata and asyncio event loop comments; no M1 functionality.*
+
+### F. Docker Image Build & Python 3.14.10 Verification
+```bash
+# 1. Base image pull
+$ docker pull python:3.14.10-slim
+3.14.10-slim: Pulling from library/python
+Digest: sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+Status: Image is up to date for python:3.14.10-slim
+
+# 2. Docker build
+$ docker build -t hookrelay-m0 .
+[+] Building ...
+naming to docker.io/library/hookrelay-m0:latest done
+
+# 3. In-container Python runtime verification
+$ docker run --rm hookrelay-m0 python --version
+Python 3.14.10
+
+$ docker run --rm hookrelay-m0 python -c "import sys; print(sys.version)"
+3.14.10 (main, Nov  5 2026, 07:57:36) [GCC 14.2.0]
+```
 
 ---
 

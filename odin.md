@@ -1,126 +1,32 @@
-# HookRelay M0 — Updated Odin Review & Anna Requirements
+# HookRelay M0 — Python Runtime Verification Correction
 
-**Branch:** `feature/m0-engineering-foundation`  
-**Status:** PASS WITH CONDITIONS  
-**Scope:** Correct M0 only. Do not implement M1 or any business functionality.
+Anna's claim that Python 3.14.8 does not exist is factually incorrect.
 
-## 1. Exact dependency pinning
+Python 3.14.8 was officially released on September 30, 2026. However, Python 3.14.10 is now the newer maintenance release.
 
-- Replace every direct dependency range in `pyproject.toml` with an exact `==` version.
-- Apply this to development dependencies too.
-- Preserve currently selected versions unless a concrete compatibility issue requires a change.
-- Regenerate `uv.lock`.
-- Delete `.venv` and demonstrate a fresh installation using:
+Apply the following:
 
-```bash
-uv sync --frozen
-```
+1. Keep `.python-version` as `3.14`.
+2. Keep `requires-python = ">=3.14,<3.15"`.
+3. Update the Dockerfile base image to:
 
-- Verify CI lockfile consistency.
-- Include the exact dependency versions in the completion report.
+   `FROM python:3.14.10-slim`
 
-## 2. PostgreSQL test isolation
+4. Verify the image:
 
-Provide implementation and evidence that:
+   `docker pull python:3.14.10-slim`
 
-- Integration tests use a dedicated test database.
-- Destructive migration operations cannot accidentally run against development or production databases.
-- The database name comes from environment configuration, not a hardcoded production-like URL.
-- Migration lifecycle tests are repeatable.
-- Baseline marker and Alembic state are properly cleaned up.
-- Concurrent test runs cannot interfere with one another.
+5. Build the project:
 
-**Required demonstrations:**
+   `docker build -t hookrelay-m0 .`
 
-1. Run the migration lifecycle test twice consecutively. Both runs must pass.
-2. Run two test instances concurrently against differently named test databases. Both must pass.
-3. Show the environment variable and database naming mechanism.
-4. Show the cleanup logic.
+6. Show the actual Python version inside the built image:
 
-Do not introduce Testcontainers unless technically necessary and justified.
+   `docker run --rm hookrelay-m0 python --version`
 
-## 3. Python runtime consistency
+7. Confirm the output is Python 3.14.10.
+8. Provide the complete Docker build output and verification results.
 
-- Change `.python-version` from `3.14.8` to `3.14`.
-- Keep `requires-python` as a compatibility range: `>=3.14,<3.15`.
-- Pin the Dockerfile base image to a specific Python 3.14 patch version.
-- Demonstrate a fresh installation on the selected runtime.
+Do not change dependencies or introduce M1 functionality.
 
-## 4. Baseline migration verification
-
-Provide the complete contents of:
-
-`migrations/versions/0001_initial_baseline.py`
-
-Acceptable:
-- Empty baseline migration.
-- Marker-table-only migration.
-
-Unacceptable:
-- Any business tables or entities intended for M1 or later.
-
-No business database entities may be introduced in M0.
-
-## 5. Environment credential verification
-
-Provide the complete contents of `.env.example`.
-
-Verify that it contains only safe example values or placeholders.
-
-No real:
-- PostgreSQL credentials
-- Redis credentials
-- KMS credentials
-- API keys or other secrets
-
-## 6. Scope verification
-
-Provide:
-
-- `git diff --stat` from `main` to `feature/m0-engineering-foundation`.
-- Output of:
-
-```bash
-rg -i 'idempotency|delivery|dlq|tenant|event|webhook' app/ migrations/
-```
-
-Any matches must be inspected. Only comments explaining exclusions are acceptable; no M1 business implementation.
-
-Confirm that no M1 functionality was introduced.
-
-## 7. Quality verification
-
-Report results for:
-
-- `uv sync --frozen`
-- Ruff check and formatting
-- Mypy
-- Complete Pytest suite
-- PostgreSQL integration tests
-- Alembic migration lifecycle tests
-
-Include actual command outputs or concise, verifiable evidence.
-
-## 8. Completion report
-
-Include:
-
-1. Changed files and implementation summary.
-2. Exact dependency versions and lockfile validation.
-3. Fresh environment installation evidence.
-4. PostgreSQL test isolation evidence.
-5. Python runtime and Docker consistency.
-6. Ruff, Mypy, and Pytest results.
-7. Confirmation that no M1 functionality was introduced.
-8. Complete contents of `0001_initial_baseline.py`.
-9. Complete contents of `.env.example`.
-10. `git diff --stat` against `main`.
-11. Business-identifier search output.
-
-## Final instruction
-
-Address only these M0 review findings and Anna's additional requirements.
-
-Do not begin M1. Do not introduce business functionality.
-
-Stop after corrections and provide the complete evidence report for Odin and Anna's independent verification. Await founder approval.
+Stop after verification and provide the evidence report.
