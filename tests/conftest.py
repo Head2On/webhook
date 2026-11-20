@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,11 +14,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-# Enforce testing environment before settings are initialized
+# Enforce testing environment
 os.environ["ENVIRONMENT"] = "testing"
 os.environ["DEBUG"] = "true"
-if not os.environ.get("TEST_DATABASE_URL") and not os.environ.get("DATABASE_URL"):
-    os.environ["DATABASE_URL"] = "postgresql+asyncpg://postgres:8520@localhost:5432/hookrelay_test"
 
 from app.core.config import get_settings
 from app.db.base import Base
@@ -25,26 +24,55 @@ from app.db.session import get_db_session
 from app.main import create_app
 
 
+def validate_test_database_target(db_url: str) -> None:
+    """Safeguard: Prevent destructive operations on non-test databases."""
+    parsed = make_url(db_url)
+    database_name = (parsed.database or "").lower()
+    if not database_name:
+        raise ValueError("Test database name cannot be empty")
+    if "test" not in database_name:
+        raise ValueError(
+            f"SAFETY VIOLATION: Database '{database_name}' does not contain 'test'. "
+            "Destructive test operations are prohibited on non-test databases."
+        )
+
+
+def get_verified_test_database_url() -> str:
+    """Retrieve and strictly validate the test database URL from environment configuration."""
+    test_url = os.environ.get("TEST_DATABASE_URL")
+    if not test_url:
+        settings = get_settings()
+        if settings.TEST_DATABASE_URL:
+            test_url = str(settings.TEST_DATABASE_URL)
+        else:
+            test_url = str(settings.DATABASE_URL)
+
+    validate_test_database_target(test_url)
+    return test_url
+
+
 @pytest.fixture
-def test_settings():
-    """Provide application settings configured for test environment."""
-    return get_settings()
+def test_db_url() -> str:
+    """Provide verified test database URL."""
+    return get_verified_test_database_url()
 
 
 @pytest_asyncio.fixture
-async def test_engine(test_settings) -> AsyncGenerator[AsyncEngine]:
+async def test_engine(test_db_url: str) -> AsyncGenerator[AsyncEngine]:
     """Create test database engine connecting to real PostgreSQL."""
-    db_url = str(test_settings.TEST_DATABASE_URL or test_settings.DATABASE_URL)
-    engine = create_async_engine(db_url, echo=False)
+    engine = create_async_engine(test_db_url, echo=False)
 
-    # Prepare schema in test database
+    # Ensure clean slate before test
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     yield engine
 
+    # Ensure clean slate after test
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP TABLE IF EXISTS _m0_baseline_marker CASCADE;"))
+        await conn.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE;"))
 
     await engine.dispose()
 

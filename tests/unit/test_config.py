@@ -52,3 +52,23 @@ def test_sync_database_url_conversion() -> None:
         DATABASE_URL="postgresql+asyncpg://postgres:pass@localhost:5432/hookrelay",
     )
     assert settings.sync_database_url == "postgresql://postgres:pass@localhost:5432/hookrelay"
+
+
+def test_test_database_target_safety_check() -> None:
+    """Verify that targeting a non-test database raises a safety violation."""
+    from tests.conftest import validate_test_database_target
+
+    # Must raise when target database lacks 'test'
+    with pytest.raises(ValueError, match="SAFETY VIOLATION"):
+        validate_test_database_target("postgresql+asyncpg://postgres:pass@localhost:5432/hookrelay")
+
+    with pytest.raises(ValueError, match="SAFETY VIOLATION"):
+        validate_test_database_target(
+            "postgresql+asyncpg://postgres:pass@localhost:5432/production_db"
+        )
+
+    # Must pass when database contains 'test'
+    validate_test_database_target(
+        "postgresql+asyncpg://postgres:pass@localhost:5432/hookrelay_test"
+    )
+    validate_test_database_target("postgresql+asyncpg://postgres:pass@localhost:5432/my_test_db_2")

@@ -1,103 +1,126 @@
-# HookRelay — M0 Implementation Assignment
-**Version:** 0.2  
-**Status:** Founder-authorized  
-**Technical Lead:** Odin  
-**Independent Reviewer:** Anna
+# HookRelay M0 — Updated Odin Review & Anna Requirements
 
-## Objective
+**Branch:** `feature/m0-engineering-foundation`  
+**Status:** PASS WITH CONDITIONS  
+**Scope:** Correct M0 only. Do not implement M1 or any business functionality.
 
-Implement the HookRelay engineering foundation according to the founder-approved M0 specification.
+## 1. Exact dependency pinning
 
-### 1. Technology requirements
+- Replace every direct dependency range in `pyproject.toml` with an exact `==` version.
+- Apply this to development dependencies too.
+- Preserve currently selected versions unless a concrete compatibility issue requires a change.
+- Regenerate `uv.lock`.
+- Delete `.venv` and demonstrate a fresh installation using:
 
-- Python — exact runtime version pinned in `.python-version`
-- FastAPI
-- SQLAlchemy 2.x
-- PostgreSQL
-- Alembic
-- Pydantic v2
-- Redis integration boundary
-- Pytest
-- HTTPX
-- Ruff
-- Mypy
-- uv for dependency management
+```bash
+uv sync --frozen
+```
 
-### 2. Mandatory requirements
+- Verify CI lockfile consistency.
+- Include the exact dependency versions in the completion report.
 
-1. Initialize the Git repository and approved directory structure.
-2. Configure `pyproject.toml` and commit `uv.lock`.
-3. Pin the Python runtime version in `.python-version`.
-4. **All direct and transitive dependencies must be resolved to exact versions in the committed `uv.lock`; CI and deployment installations must use the lockfile in frozen mode, and CI must fail if the lockfile is inconsistent with project dependencies.**
-5. Implement application configuration and validation.
-6. Create the FastAPI application entry point.
-7. Establish SQLAlchemy database session management.
-8. Configure Alembic migrations.
-9. Establish unit and integration test foundations.
-10. Configure linting, formatting and type checking.
-11. Write README instructions for reproducible development.
+## 2. PostgreSQL test isolation
 
-### 3. Architecture boundaries
+Provide implementation and evidence that:
 
-- API layer handles HTTP requests and responses.
-- Service layer owns business operations and transaction orchestration.
-- Repository layer handles database access.
-- Models represent persistence structures.
-- Schemas define request and response contracts.
-- Workers execute asynchronous background processing.
-- Integrations isolate infrastructure dependencies.
+- Integration tests use a dedicated test database.
+- Destructive migration operations cannot accidentally run against development or production databases.
+- The database name comes from environment configuration, not a hardcoded production-like URL.
+- Migration lifecycle tests are repeatable.
+- Baseline marker and Alembic state are properly cleaned up.
+- Concurrent test runs cannot interfere with one another.
 
-Do not introduce business features or invent database entities during M0.
+**Required demonstrations:**
 
-### 4. Canonicalizer debt — tracked
+1. Run the migration lifecycle test twice consecutively. Both runs must pass.
+2. Run two test instances concurrently against differently named test databases. Both must pass.
+3. Show the environment variable and database naming mechanism.
+4. Show the cleanup logic.
 
-The existing HR-IDEM-001 decision requires:
+Do not introduce Testcontainers unless technically necessary and justified.
 
-- RFC 8785 JSON Canonicalization Scheme.
-- SHA-256 fingerprinting.
-- Original raw payload preserved separately.
-- Outbound HMAC signing uses original raw payload bytes.
+## 3. Python runtime consistency
 
-The fingerprint identifier inconsistency remains tracked:
+- Change `.python-version` from `3.14.8` to `3.14`.
+- Keep `requires-python` as a compatibility range: `>=3.14,<3.15`.
+- Pin the Dockerfile base image to a specific Python 3.14 patch version.
+- Demonstrate a fresh installation on the selected runtime.
 
-- `jcs-rfc8785-v1`
-- `rfc8785-sha256-v1`
+## 4. Baseline migration verification
 
-Do not resolve or implement the canonicalizer during M0. It must be resolved before event ingestion implementation begins.
+Provide the complete contents of:
 
-### 5. Implementation constraints
+`migrations/versions/0001_initial_baseline.py`
 
-- No tenant management.
-- No API key authentication.
-- No event ingestion.
-- No idempotency implementation.
-- No delivery workers.
-- No retry processing.
-- No DLQ.
-- No HMAC signing.
-- No credentials committed to Git.
-- No unnecessary dependencies.
-- No unapproved architecture changes.
+Acceptable:
+- Empty baseline migration.
+- Marker-table-only migration.
 
-### 6. Deliverables
+Unacceptable:
+- Any business tables or entities intended for M1 or later.
+
+No business database entities may be introduced in M0.
+
+## 5. Environment credential verification
+
+Provide the complete contents of `.env.example`.
+
+Verify that it contains only safe example values or placeholders.
+
+No real:
+- PostgreSQL credentials
+- Redis credentials
+- KMS credentials
+- API keys or other secrets
+
+## 6. Scope verification
 
 Provide:
 
-1. Working repository foundation.
-2. Reproducible dependency installation.
-3. Successful application startup.
-4. Database connectivity.
-5. Migration validation.
-6. Passing unit tests.
-7. Integration-test foundation.
-8. Successful Ruff and Mypy checks.
-9. README development instructions.
-10. Completion report with files created, dependency versions, commands, test results, limitations and deviations.
+- `git diff --stat` from `main` to `feature/m0-engineering-foundation`.
+- Output of:
 
-### 7. Stop condition
+```bash
+rg -i 'idempotency|delivery|dlq|tenant|event|webhook' app/ migrations/
+```
 
-Stop after M0.
+Any matches must be inspected. Only comments explaining exclusions are acceptable; no M1 business implementation.
 
-Do not begin M1 or implement business features without Odin's technical review and founder authorization.
+Confirm that no M1 functionality was introduced.
 
-The completed repository and test report must be made available to Ishan and Anna for verification.
+## 7. Quality verification
+
+Report results for:
+
+- `uv sync --frozen`
+- Ruff check and formatting
+- Mypy
+- Complete Pytest suite
+- PostgreSQL integration tests
+- Alembic migration lifecycle tests
+
+Include actual command outputs or concise, verifiable evidence.
+
+## 8. Completion report
+
+Include:
+
+1. Changed files and implementation summary.
+2. Exact dependency versions and lockfile validation.
+3. Fresh environment installation evidence.
+4. PostgreSQL test isolation evidence.
+5. Python runtime and Docker consistency.
+6. Ruff, Mypy, and Pytest results.
+7. Confirmation that no M1 functionality was introduced.
+8. Complete contents of `0001_initial_baseline.py`.
+9. Complete contents of `.env.example`.
+10. `git diff --stat` against `main`.
+11. Business-identifier search output.
+
+## Final instruction
+
+Address only these M0 review findings and Anna's additional requirements.
+
+Do not begin M1. Do not introduce business functionality.
+
+Stop after corrections and provide the complete evidence report for Odin and Anna's independent verification. Await founder approval.

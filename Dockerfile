@@ -1,5 +1,5 @@
 # Build and runtime stage for HookRelay
-FROM python:3.14-slim AS runtime
+FROM python:3.14.8-slim AS runtime
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \

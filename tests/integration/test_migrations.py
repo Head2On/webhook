@@ -6,47 +6,49 @@ from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.core.config import get_settings
+from tests.conftest import get_verified_test_database_url
 
 
 @pytest.mark.asyncio
 async def test_alembic_migrations_lifecycle(test_engine: AsyncEngine) -> None:
-    """Test full migration lifecycle: upgrade to head, verify table, downgrade."""
-    settings = get_settings()
-    db_url = str(settings.TEST_DATABASE_URL or settings.DATABASE_URL)
+    """Test full migration lifecycle: upgrade to head, verify table, downgrade to base."""
+    db_url = get_verified_test_database_url()
 
     alembic_cfg = Config("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
-    # Apply all migrations to head
-    command.upgrade(alembic_cfg, "head")
+    try:
+        # 1. Apply all migrations to head
+        command.upgrade(alembic_cfg, "head")
 
-    # Verify marker table exists
-    async with test_engine.connect() as conn:
-        result = await conn.execute(
-            text(
-                "SELECT EXISTS ("
-                "  SELECT FROM information_schema.tables "
-                "  WHERE table_name = '_m0_baseline_marker'"
-                ");"
+        # 2. Verify marker table exists
+        async with test_engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT FROM information_schema.tables "
+                    "  WHERE table_name = '_m0_baseline_marker'"
+                    ");"
+                )
             )
-        )
-        assert result.scalar() is True
+            assert result.scalar() is True
 
-    # Downgrade back to base
-    command.downgrade(alembic_cfg, "base")
+        # 3. Downgrade back to base
+        command.downgrade(alembic_cfg, "base")
 
-    # Verify marker table was dropped
-    async with test_engine.connect() as conn:
-        result = await conn.execute(
-            text(
-                "SELECT EXISTS ("
-                "  SELECT FROM information_schema.tables "
-                "  WHERE table_name = '_m0_baseline_marker'"
-                ");"
+        # 4. Verify marker table was dropped
+        async with test_engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT FROM information_schema.tables "
+                    "  WHERE table_name = '_m0_baseline_marker'"
+                    ");"
+                )
             )
-        )
-        assert result.scalar() is False
-
-    # Re-apply upgrade to leave database clean for subsequent operations
-    command.upgrade(alembic_cfg, "head")
+            assert result.scalar() is False
+    finally:
+        # Ensure complete cleanup of any migration/alembic state
+        async with test_engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS _m0_baseline_marker CASCADE;"))
+            await conn.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE;"))
