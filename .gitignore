@@ -60,7 +60,9 @@ dmypy.json
 # Operating system files
 .DS_Store
 Thumbs.db
+*.zip
 
 # Documentation & internal notes
 *.md
 !README.md
+!docs/**/*.md
