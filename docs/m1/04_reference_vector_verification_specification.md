@@ -99,6 +99,7 @@ In Gate 2, the test harness must be implemented with pytest:
 # Specification of test execution structure (Gate 2 contract requirement)
 # File: tests/integration/test_rfc8785_reference.py
 
+
 def test_rfc8785_official_vectors(reference_vector_pair):
     """
     1. Read input JSON bytes from pinned testdata (commit c4a3b7d).
@@ -108,6 +109,7 @@ def test_rfc8785_official_vectors(reference_vector_pair):
     5. Assert SHA-256 fingerprint exact equality.
     """
     ...
+
 
 def test_hookrelay_rejection_matrix(boundary_test_case):
     """
