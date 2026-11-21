@@ -1,10 +1,10 @@
-# HookRelay — Milestone 1 (M1) Gate 1 Specifications
+# HookRelay — Milestone 1 (M1) Gate 1 & Gate 2 Documentation
 ## Canonicalizer and Idempotency Contract Documentation Index
 
 **Milestone:** M1 — Event Ingestion & Idempotency Engine  
-**Gate:** 1 — Technical Contract & Architecture Specification  
-**Status:** COMPLETE (Revised per Anna Independent Review & Odin Final Requirements — Documentation Only)  
-**Implementation Authorization:** NOT GRANTED (Awaiting Founder Approval)
+**Gate:** 2 — Canonicalizer Implementation  
+**Status:** IMPLEMENTATION COMPLETE — READY FOR ODIN TECHNICAL REVIEW  
+**Implementation Scope:** Canonicalization engine, library evaluation, and verification suites only. (Database migrations, models, repositories, and Gate 3/4 remain strictly unauthorized).
 
 ---
 
@@ -39,6 +39,13 @@
 5. **[Document 05: Traceability Matrix and Architecture Decisions](file:///E:/Projects/personal/webhook/docs/m1/05_traceability_matrix.md)**
    - Traceability table mapping all requirements to `HR-ARCH-001`, `HR-IDEM-001`, `HR-IDEM-002`, and `HR-CANON-001`..`005`.
    - Clear distinction between approved architecture decisions and proposed technical recommendations (PostgreSQL `BYTEA` storage, `lock_timeout` TBD, transport mappings) preserving the Founder's decision authority.
+
+6. **[Document 06: RFC 8785 Library Evaluation & Selection Report](file:///E:/Projects/personal/webhook/docs/m1/06_library_evaluation_report.md)**
+   - Comparative evaluation between `rfc8785==0.1.4` and `jcs==0.3.0`.
+   - Float serialization validation (`-0.0` $\to$ `0`, `1e-6` $\to$ `0.000001`, `1e-7` $\to$ `1e-7`).
+   - Safe integer range boundary enforcement ($2^{53}-1$ pass vs $2^{53}$ fail).
+   - Full 100% pass verification on official reference vectors.
+   - Justification for selecting `rfc8785==0.1.4` (Trail of Bits).
 
 ---
 
