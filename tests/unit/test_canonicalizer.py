@@ -129,6 +129,35 @@ class TestSafeIntegerBoundaries:
             canonicalize(payload)
         assert exc_info.value.error_code == "UNSAFE_INTEGER_RANGE_EXCEEDED"
 
+    def test_oversized_integer_tokens_exceeding_python_digit_limit(self) -> None:
+        """Regression tests for oversized integer tokens exceeding Python's 4,300 digit limit.
+
+        Verifies that tokens > 4,300 digits are rejected through HookRelay's domain error
+        hierarchy with UNSAFE_INTEGER_RANGE_EXCEEDED, and no unhandled ValueError escapes.
+        """
+        # Very long positive integer token (4,500 digits)
+        long_pos_str = "9" * 4500
+        payload_pos = f'{{"val": {long_pos_str}}}'.encode()
+        with pytest.raises(UnsafeIntegerRangeError) as exc_pos:
+            canonicalize(payload_pos)
+        assert exc_pos.value.error_code == "UNSAFE_INTEGER_RANGE_EXCEEDED"
+
+        # Canonicalize payload container interface also reports domain error
+        res_pos = canonicalize_payload(payload_pos)
+        assert res_pos.is_ok is False
+        assert res_pos.error_code == "UNSAFE_INTEGER_RANGE_EXCEEDED"
+
+        # Very long negative integer token (4,500 digits)
+        long_neg_str = "-" + ("9" * 4500)
+        payload_neg = f'{{"val": {long_neg_str}}}'.encode()
+        with pytest.raises(UnsafeIntegerRangeError) as exc_neg:
+            canonicalize(payload_neg)
+        assert exc_neg.value.error_code == "UNSAFE_INTEGER_RANGE_EXCEEDED"
+
+        res_neg = canonicalize_payload(payload_neg)
+        assert res_neg.is_ok is False
+        assert res_neg.error_code == "UNSAFE_INTEGER_RANGE_EXCEEDED"
+
 
 class TestUnicodeAndEscaping:
     """Category 3: Unicode & Surrogate Validation (HR-CANON-003) & Escaping."""

@@ -6,12 +6,13 @@ Binds to the official RFC 8785 reference test suite authored by Anders Rundgren:
 - Pinned Git Commit: c4a3b7d18728a39d48b792e35a1ff7d863690d7c
 - Corpus Location: tests/data/canonicalizer/upstream
 
-Granularly asserts every individual test vector:
-1. 25 top-level member vectors across all official corpus files.
-2. 15 nested leaf assertions (numbers, literals, nested objects, nested arrays).
-3. 9 official ES6 IEEE-754 number vectors from verify-numbers.py.
-4. 6 whole-document canonicalization assertions and 6 round-trip recycling assertions.
-5. HookRelay ingestion-policy validation with explicit exclusion accounting.
+Test Accounting Architecture:
+1. Category 1: Independent upstream reference-vector checks (6 whole documents).
+2. Category 2: Derived semantic / member assertions (25 individual members tested
+   against independently specified authoritative expected canonical bytes).
+3. Category 3: Number-specific checks (9 official ES6 IEEE-754 vectors + 5 values.json numbers).
+4. Category 4: Round-trip recycling checks (6 document idempotency assertions).
+5. Category 5: HookRelay-specific ingestion-policy checks (5 accepted, 1 excluded).
 """
 
 from __future__ import annotations
@@ -53,7 +54,6 @@ class DocumentPair(NamedTuple):
     expected_sha256: str
     is_top_level_object: bool
     parsed_input: Any
-    parsed_output: Any
 
 
 def load_official_documents() -> dict[str, DocumentPair]:
@@ -69,7 +69,6 @@ def load_official_documents() -> dict[str, DocumentPair]:
         expected_sha256 = hashlib.sha256(expected_output_bytes).hexdigest()
 
         parsed_input = json.loads(input_bytes.decode("utf-8"))
-        parsed_output = json.loads(expected_output_bytes.decode("utf-8"))
         is_object = isinstance(parsed_input, dict)
 
         docs[name] = DocumentPair(
@@ -79,7 +78,6 @@ def load_official_documents() -> dict[str, DocumentPair]:
             expected_sha256=expected_sha256,
             is_top_level_object=is_object,
             parsed_input=parsed_input,
-            parsed_output=parsed_output,
         )
     return docs
 
@@ -87,23 +85,81 @@ def load_official_documents() -> dict[str, DocumentPair]:
 OFFICIAL_DOCS = load_official_documents()
 
 # -----------------------------------------------------------------------------
-# 1. Individual Top-Level Member Vectors (25 total across all 6 files)
+# Category 2: Derived Member Vectors with INDEPENDENT Authoritative Bytes
+# Each test compares canonicalize_rfc8785(input) against an independently specified
+# raw expected byte literal derived directly from the official output files.
 # -----------------------------------------------------------------------------
-INDIVIDUAL_MEMBER_CASES: list[tuple[str, str, Any, Any]] = []
-for doc_name, doc in OFFICIAL_DOCS.items():
-    if isinstance(doc.parsed_input, dict):
-        for key in doc.parsed_input:
-            INDIVIDUAL_MEMBER_CASES.append(
-                (doc_name, f"key:{key}", doc.parsed_input[key], doc.parsed_output[key])
-            )
-    elif isinstance(doc.parsed_input, list):
-        for idx in range(len(doc.parsed_input)):
-            INDIVIDUAL_MEMBER_CASES.append(
-                (doc_name, f"index:{idx}", doc.parsed_input[idx], doc.parsed_output[idx])
-            )
+AUTHORITATIVE_MEMBER_VECTORS: list[tuple[str, str, Any, bytes]] = [
+    # french.json (4 members)
+    ("french.json", "peach", "This sorting order", b'"This sorting order"'),
+    (
+        "french.json",
+        "peche_acute",
+        "is wrong according to French",
+        b'"is wrong according to French"',
+    ),
+    (
+        "french.json",
+        "peche_circumflex",
+        "but canonicalization MUST",
+        b'"but canonicalization MUST"',
+    ),
+    ("french.json", "sin", "ignore locale", b'"ignore locale"'),
+    # weird.json (9 members)
+    ("weird.json", "euro_sign", "Euro Sign", b'"Euro Sign"'),
+    ("weird.json", "carriage_return", "Carriage Return", b'"Carriage Return"'),
+    ("weird.json", "newline", "Newline", b'"Newline"'),
+    ("weird.json", "digit_one", "One", b'"One"'),
+    ("weird.json", "control_char", "Control\x7f", b'"Control\x7f"'),
+    ("weird.json", "smiley_emoji", "Smiley", b'"Smiley"'),
+    (
+        "weird.json",
+        "latin_small_o",
+        "Latin Small Letter O With Diaeresis",
+        b'"Latin Small Letter O With Diaeresis"',
+    ),
+    (
+        "weird.json",
+        "hebrew_dalet",
+        "Hebrew Letter Dalet With Dagesh",
+        b'"Hebrew Letter Dalet With Dagesh"',
+    ),
+    ("weird.json", "browser_challenge", "Browser Challenge", b'"Browser Challenge"'),
+    # structures.json (6 members)
+    ("structures.json", "empty_key", "empty", b'"empty"'),
+    (
+        "structures.json",
+        "key_1",
+        {"f": {"f": "hi", "F": 5}, "\n": 56.0},
+        b'{"\\n":56,"f":{"F":5,"f":"hi"}}',
+    ),
+    ("structures.json", "key_10", {}, b"{}"),
+    ("structures.json", "key_111", [{"e": "yes", "E": "no"}], b'[{"E":"no","e":"yes"}]'),
+    ("structures.json", "key_A", {}, b"{}"),
+    ("structures.json", "key_a", {}, b"{}"),
+    # unicode.json (1 member)
+    ("unicode.json", "unnormalized", "A\u030a", b'"A\xcc\x8a"'),
+    # values.json (3 members)
+    (
+        "values.json",
+        "numbers",
+        [333333333.33333329, 1e30, 4.50, 2e-3, 0.000000000000000000000000001],
+        b"[333333333.3333333,1e+30,4.5,0.002,1e-27]",
+    ),
+    (
+        "values.json",
+        "string",
+        "\u20ac$\u000f\u000aA'\u0042\u0022\u005c\\\"/",
+        b'"\xe2\x82\xac$\\u000f\\nA\'B\\"\\\\\\\\\\"/"',
+    ),
+    ("values.json", "literals", [None, True, False], b"[null,true,false]"),
+    # arrays.json (2 members)
+    ("arrays.json", "index_0", 56, b"56"),
+    ("arrays.json", "index_1", {"d": True, "10": None, "1": []}, b'{"1":[],"10":null,"d":true}'),
+]
 
 # -----------------------------------------------------------------------------
-# 2. Official ES6 Number Vectors from cyberphone/verify-numbers.py (9 vectors)
+# Category 3: Official ES6 Number Vectors from cyberphone/verify-numbers.py (9 vectors)
 # -----------------------------------------------------------------------------
 OFFICIAL_ES6_NUMBER_VECTORS: list[tuple[str, str, bool]] = [
     ("4340000000000001", "9007199254740994", False),
@@ -117,9 +173,17 @@ OFFICIAL_ES6_NUMBER_VECTORS: list[tuple[str, str, bool]] = [
     ("fff0000000000000", "-Infinity", True),  # -Inf rejected
 ]
 
+VALUES_JSON_NESTED_NUMBERS: list[tuple[float, bytes]] = [
+    (333333333.33333329, b"333333333.3333333"),
+    (1e30, b"1e+30"),
+    (4.50, b"4.5"),
+    (2e-3, b"0.002"),
+    (0.000000000000000000000000001, b"1e-27"),
+]
 
-class TestOfficialCorpusProvenance:
-    """Verifies provenance, file presence, and exact vector inventory."""
+
+class TestOfficialCorpusProvenanceAndAccounting:
+    """Verifies provenance, file presence, and exact vector category counts."""
 
     def test_corpus_provenance_and_file_completeness(self) -> None:
         """Verify provenance and confirm all 6 reference corpus files exist."""
@@ -127,97 +191,77 @@ class TestOfficialCorpusProvenance:
         assert CORPUS_PROVENANCE["version"] == "v1.0.0"
         assert CORPUS_PROVENANCE["commit"] == "c4a3b7d18728a39d48b792e35a1ff7d863690d7c"
 
-    def test_top_level_member_inventory_count(self) -> None:
-        """Assert exactly 25 top-level member vectors across all 6 files."""
-        assert len(INDIVIDUAL_MEMBER_CASES) == 25
+    def test_category_vector_counts_invariant(self) -> None:
+        """Assert exact accounting totals:
+
+        - Category 1 (Independent upstream documents): 6
+        - Category 2 (Derived member vectors with independent expected bytes): 25
+        - Category 3 (Number-specific: 9 ES6 IEEE-754 + 5 values.json nested): 14
+        - Category 4 (Document round-trip recycling checks): 6
+        - Category 5 (HookRelay ingestion policy checks): 6 (5 accepted, 1 excluded)
+        """
+        assert len(OFFICIAL_DOCS) == 6
+        assert len(AUTHORITATIVE_MEMBER_VECTORS) == 25
+        assert len(OFFICIAL_ES6_NUMBER_VECTORS) == 9
+        assert len(VALUES_JSON_NESTED_NUMBERS) == 5
 
 
-class TestOfficialIndividualMemberAssertions:
-    """Category A: Tests every individual top-level member vector (25 assertions)."""
+class TestCategory1UpstreamReferenceVectorChecks:
+    """Category 1: Independent Upstream Reference Vector Checks (6 Whole Documents).
+
+    Evaluates full documents directly against official output files without circular comparison.
+    """
+
+    @pytest.mark.parametrize("doc_name", list(OFFICIAL_DOCS.keys()))
+    def test_upstream_document_canonicalization(self, doc_name: str) -> None:
+        """Verify exact byte match, SHA-256 digest, and fingerprint for all 6 official documents."""
+        doc = OFFICIAL_DOCS[doc_name]
+        actual_bytes = canonicalize_rfc8785(doc.parsed_input)
+
+        # 1. Byte-for-byte exact equality against official output file
+        assert actual_bytes == doc.expected_output_bytes
+
+        # 2. SHA-256 binary digest exact equality
+        actual_sha256 = hashlib.sha256(actual_bytes).hexdigest()
+        assert actual_sha256 == doc.expected_sha256
+
+        # 3. Fingerprint format verification
+        fp = compute_fingerprint(actual_bytes)
+        assert fp == f"jcs-rfc8785-v1:{doc.expected_sha256}"
+        assert len(fp) == 79
+
+
+class TestCategory2DerivedMemberAssertions:
+    """Category 2: Derived Member Assertions (25 Individual Members).
+
+    Compares canonicalize_rfc8785(in_val) against an INDEPENDENT authoritative byte literal.
+    No circular call to canonicalize_rfc8785 is used on the expected value.
+    """
 
     @pytest.mark.parametrize(
-        ("doc_name", "member_id", "in_val", "expected_val"),
-        INDIVIDUAL_MEMBER_CASES,
+        ("doc_name", "member_id", "in_val", "expected_canonical_bytes"),
+        AUTHORITATIVE_MEMBER_VECTORS,
     )
-    def test_individual_member_vector_canonicalization(
-        self, doc_name: str, member_id: str, in_val: Any, expected_val: Any
+    def test_individual_member_vector_against_independent_expected_bytes(
+        self, doc_name: str, member_id: str, in_val: Any, expected_canonical_bytes: bytes
     ) -> None:
-        """Canonicalize each isolated member value and verify canonical equality."""
-        canonical_in = canonicalize_rfc8785(in_val)
-        canonical_expected = canonicalize_rfc8785(expected_val)
-        assert canonical_in == canonical_expected
+        """Assert each member serializes to its authoritative expected canonical byte sequence."""
+        actual_canonical_bytes = canonicalize_rfc8785(in_val)
+        assert actual_canonical_bytes == expected_canonical_bytes
 
 
-class TestOfficialNestedAssertions:
-    """Category B: Tests nested leaf value assertions across values, structures, and arrays."""
+class TestCategory3NumberSpecificChecks:
+    """Category 3: Number-Specific Checks (14 Assertions).
 
-    # 1. values.json: 5 nested numbers
-    @pytest.mark.parametrize(
-        ("in_num", "expected_str"),
-        [
-            (333333333.33333329, "333333333.3333333"),
-            (1e30, "1e+30"),
-            (4.50, "4.5"),
-            (2e-3, "0.002"),
-            (0.000000000000000000000000001, "1e-27"),
-        ],
-    )
-    def test_values_json_nested_numbers(self, in_num: float, expected_str: str) -> None:
-        """Assert nested numbers in values.json convert to expected ECMA-262 string."""
-        actual = canonicalize_rfc8785(in_num)
-        assert actual.decode() == expected_str
-
-    # 2. values.json: 3 nested literals
-    @pytest.mark.parametrize("lit", [None, True, False])
-    def test_values_json_nested_literals(self, lit: Any) -> None:
-        """Assert each of the 3 nested literals in values.json canonicalizes correctly."""
-        actual = canonicalize_rfc8785(lit)
-        assert actual == json.dumps(lit).encode()
-
-    # 3. values.json: string with 8 escapes
-    def test_values_json_nested_string_escapes(self) -> None:
-        """Assert values.json string escapes control chars, and leaves solidus unescaped."""
-        raw_str = OFFICIAL_DOCS["values.json"].parsed_input["string"]
-        expected_str = OFFICIAL_DOCS["values.json"].parsed_output["string"]
-        assert canonicalize_rfc8785(raw_str) == canonicalize_rfc8785(expected_str)
-
-    # 4. structures.json: nested property assertions
-    def test_structures_json_nested_float_trailing_zero(self) -> None:
-        """Assert structures.json nested float 56.0 omits trailing zero to produce 56."""
-        val = OFFICIAL_DOCS["structures.json"].parsed_input["1"]["\n"]
-        assert val == 56.0
-        assert canonicalize_rfc8785(val) == b"56"
-
-    def test_structures_json_nested_object_f_sorting(self) -> None:
-        """Assert structures.json nested object {'f': 'hi', 'F': 5} sorts to {'F':5,'f':'hi'}."""
-        sub_obj = OFFICIAL_DOCS["structures.json"].parsed_input["1"]["f"]
-        assert canonicalize_rfc8785(sub_obj) == b'{"F":5,"f":"hi"}'
-
-    def test_structures_json_nested_array_sorting(self) -> None:
-        """Assert structures.json nested array element [{'e': 'yes', 'E': 'no'}] sorts keys."""
-        sub_arr = OFFICIAL_DOCS["structures.json"].parsed_input["111"]
-        assert canonicalize_rfc8785(sub_arr) == b'[{"E":"no","e":"yes"}]'
-
-    # 5. arrays.json: nested property assertions
-    def test_arrays_json_nested_primitive_element_0(self) -> None:
-        """Assert arrays.json element 0 is integer 56."""
-        elem = OFFICIAL_DOCS["arrays.json"].parsed_input[0]
-        assert canonicalize_rfc8785(elem) == b"56"
-
-    def test_arrays_json_nested_object_element_1_key_sorting(self) -> None:
-        """Assert arrays.json element 1 sorts keys to '1':[], '10':null, 'd':true."""
-        elem = OFFICIAL_DOCS["arrays.json"].parsed_input[1]
-        assert canonicalize_rfc8785(elem) == b'{"1":[],"10":null,"d":true}'
-
-
-class TestOfficialES6NumberVectors:
-    """Category C: Tests all 9 official IEEE-754 number vectors from verify-numbers.py."""
+    - 9 official ES6 IEEE-754 double precision vectors from verify-numbers.py
+    - 5 nested numbers in values.json tested against independent string literals
+    """
 
     @pytest.mark.parametrize(
         ("ieee_hex", "expected_output", "should_reject"),
         OFFICIAL_ES6_NUMBER_VECTORS,
     )
-    def test_es6_number_vectors(
+    def test_official_es6_number_vectors(
         self, ieee_hex: str, expected_output: str, should_reject: bool
     ) -> None:
         """Verify IEEE-754 double precision values match expected string or reject non-finite."""
@@ -229,25 +273,21 @@ class TestOfficialES6NumberVectors:
             actual = canonicalize_rfc8785(val).decode()
             assert actual == expected_output
 
+    @pytest.mark.parametrize(
+        ("in_num", "expected_bytes"),
+        VALUES_JSON_NESTED_NUMBERS,
+    )
+    def test_values_json_nested_numbers(self, in_num: float, expected_bytes: bytes) -> None:
+        """Assert each of the 5 nested numbers in values.json converts to ECMA-262 bytes."""
+        actual_bytes = canonicalize_rfc8785(in_num)
+        assert actual_bytes == expected_bytes
 
-class TestOfficialDocumentCanonicalizationAndRecycling:
-    """Category D: Whole document exact binary match & round-trip recycling."""
 
-    @pytest.mark.parametrize("doc_name", list(OFFICIAL_DOCS.keys()))
-    def test_whole_document_canonicalization_and_fingerprint(self, doc_name: str) -> None:
-        """Verify exact byte match, SHA-256 digest, and fingerprint for all 6 documents."""
-        doc = OFFICIAL_DOCS[doc_name]
-        actual_bytes = canonicalize_rfc8785(doc.parsed_input)
-        assert actual_bytes == doc.expected_output_bytes
+class TestCategory4RoundTripIdempotencyChecks:
+    """Category 4: Round-Trip Recycling Checks (6 Document Idempotency Assertions).
 
-        # Binary SHA-256 equality
-        actual_sha256 = hashlib.sha256(actual_bytes).hexdigest()
-        assert actual_sha256 == doc.expected_sha256
-
-        # Fingerprint check
-        fp = compute_fingerprint(actual_bytes)
-        assert fp == f"jcs-rfc8785-v1:{doc.expected_sha256}"
-        assert len(fp) == 79
+    Re-parses canonical output and re-canonicalizes, validating: actual == expected == recycled.
+    """
 
     @pytest.mark.parametrize("doc_name", list(OFFICIAL_DOCS.keys()))
     def test_document_round_trip_recycling(self, doc_name: str) -> None:
@@ -259,8 +299,11 @@ class TestOfficialDocumentCanonicalizationAndRecycling:
         assert actual_bytes == recycled_bytes == doc.expected_output_bytes
 
 
-class TestHookRelayIngestionPolicyAccounting:
-    """Category E: Evaluates HookRelay ingestion root-object policy against all 6 documents."""
+class TestCategory5HookRelayIngestionPolicyChecks:
+    """Category 5: HookRelay-Specific Ingestion Policy Checks (6 Document Checks).
+
+    Evaluates HookRelay ingestion root-object policy against all 6 documents.
+    """
 
     @pytest.mark.parametrize(
         "doc_name",
@@ -288,26 +331,3 @@ class TestHookRelayIngestionPolicyAccounting:
 
         assert exc_info.value.error_code == "TOP_LEVEL_OBJECT_REQUIRED"
         assert exc_info.value.message == "Payload root must be a JSON Object."
-
-
-class TestCorpusExactAccountingAssertion:
-    """Category F: Global invariant assertions verifying exact execution counts."""
-
-    def test_assertion_counts_summary(self) -> None:
-        """Assert exact accounting totals:
-
-        - 25 top-level member vectors executed and passed (0 failed).
-        - 15 nested leaf assertions executed and passed (0 failed).
-        - 9 official ES6 number vectors executed and passed (0 failed).
-        - 6 whole-document canonicalization assertions executed and passed (0 failed).
-        - 6 round-trip recycling assertions executed and passed (0 failed).
-        - Total Pure RFC 8785 Assertions: 61 executed, 61 passed, 0 failed, 0 excluded.
-        - Total HookRelay Ingestion Policy Assertions: 6 executed, 5 passed, 1 excluded, 0 failed.
-        """
-        top_level_count = len(INDIVIDUAL_MEMBER_CASES)
-        es6_count = len(OFFICIAL_ES6_NUMBER_VECTORS)
-        doc_count = len(OFFICIAL_DOCS)
-
-        assert top_level_count == 25
-        assert es6_count == 9
-        assert doc_count == 6

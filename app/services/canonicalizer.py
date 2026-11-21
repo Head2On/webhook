@@ -250,7 +250,25 @@ def validate_and_parse_payload(payload_bytes: bytes) -> dict[str, Any]:
         return dict(pairs)
 
     def _parse_int(token: str) -> int:
-        val = int(token)
+        # Lexical guard: safe ints [-9007199254740991, +9007199254740991] have <=16 digits.
+        # Any token with >16 digits (excluding sign) is guaranteed outside safe range.
+        # This safely rejects oversized integer tokens (e.g. > 4300 digits) without calling
+        # int(token), avoiding CPU waste and preventing int_max_str_digits ValueError.
+        digits = token[1:] if token.startswith(("-", "+")) else token
+        stripped_digits = digits.lstrip("0") or "0"
+        if len(stripped_digits) > 16:
+            raise UnsafeIntegerRangeError(
+                f"Integer token value '{token[:32]}...' is outside safe range [-(2^53-1), 2^53-1]."
+            )
+
+        try:
+            val = int(token)
+        except ValueError as e:
+            # Trap any Python integer conversion limit or malformed integer representation
+            raise UnsafeIntegerRangeError(
+                f"Integer token value '{token[:32]}' cannot be safely parsed: {e}"
+            ) from e
+
         if val > MAX_SAFE_INTEGER or val < MIN_SAFE_INTEGER:
             raise UnsafeIntegerRangeError(
                 f"Integer token value '{token}' is outside the safe range [-(2^53-1), 2^53-1]."
