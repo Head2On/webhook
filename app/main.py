@@ -10,7 +10,13 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import get_settings
-from app.core.exceptions import HookRelayException
+from app.core.exceptions import (
+    CanonicalizationError,
+    HookRelayException,
+    IdempotencyFingerprintMismatchError,
+    PayloadTooLargeError,
+    UnsupportedMediaTypeError,
+)
 from app.core.logging import setup_logging
 from app.db.session import check_database_connection, close_database_connection
 from app.integrations.redis import redis_client
@@ -65,6 +71,50 @@ def create_app() -> FastAPI:
     )
 
     # Exception handlers
+    @application.exception_handler(CanonicalizationError)
+    async def canonicalization_exception_handler(
+        request: Request,
+        exc: CanonicalizationError,
+    ) -> JSONResponse:
+        logger.warning("Canonicalization rejection: %s (%s)", exc.error_code, exc.message)
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": exc.error_code, "message": exc.message},
+        )
+
+    @application.exception_handler(IdempotencyFingerprintMismatchError)
+    async def idempotency_conflict_handler(
+        request: Request,
+        exc: IdempotencyFingerprintMismatchError,
+    ) -> JSONResponse:
+        logger.warning("Idempotency fingerprint conflict: %s", exc.message)
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"error": exc.error_code, "message": exc.message},
+        )
+
+    @application.exception_handler(PayloadTooLargeError)
+    async def payload_too_large_handler(
+        request: Request,
+        exc: PayloadTooLargeError,
+    ) -> JSONResponse:
+        logger.warning("Payload size exceeded: %s", exc.message)
+        return JSONResponse(
+            status_code=413,
+            content={"error": exc.error_code, "message": exc.message},
+        )
+
+    @application.exception_handler(UnsupportedMediaTypeError)
+    async def unsupported_media_type_handler(
+        request: Request,
+        exc: UnsupportedMediaTypeError,
+    ) -> JSONResponse:
+        logger.warning("Unsupported media type: %s", exc.message)
+        return JSONResponse(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            content={"error": exc.error_code, "message": exc.message},
+        )
+
     @application.exception_handler(HookRelayException)
     async def hookrelay_exception_handler(
         request: Request,
