@@ -61,6 +61,7 @@ dmypy.json
 .DS_Store
 Thumbs.db
 *.zip
+*.7z
 
 # Documentation & internal notes
 *.md
