@@ -6,6 +6,7 @@ from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.db.base import Base
 from tests.conftest import get_verified_test_database_url
 
 
@@ -18,35 +19,57 @@ async def test_alembic_migrations_lifecycle(test_engine: AsyncEngine) -> None:
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
     try:
+        # Clean slate before testing migration lifecycle
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.execute(text("DROP TABLE IF EXISTS _m0_baseline_marker CASCADE;"))
+            await conn.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE;"))
+
         # 1. Apply all migrations to head
         command.upgrade(alembic_cfg, "head")
 
-        # 2. Verify marker table exists
+        # 2. Verify marker table and Gate 3 business tables exist
         async with test_engine.connect() as conn:
-            result = await conn.execute(
-                text(
-                    "SELECT EXISTS ("
-                    "  SELECT FROM information_schema.tables "
-                    "  WHERE table_name = '_m0_baseline_marker'"
-                    ");"
+            for table_name in [
+                "_m0_baseline_marker",
+                "idempotency_keys",
+                "events",
+                "deliveries",
+                "outbox",
+            ]:
+                result = await conn.execute(
+                    text(
+                        "SELECT EXISTS ("
+                        "  SELECT FROM information_schema.tables "
+                        f"  WHERE table_name = '{table_name}'"
+                        ");"
+                    )
                 )
-            )
-            assert result.scalar() is True
+                assert result.scalar() is True, (
+                    f"Table {table_name} missing after migration upgrade"
+                )
 
         # 3. Downgrade back to base
         command.downgrade(alembic_cfg, "base")
 
-        # 4. Verify marker table was dropped
+        # 4. Verify all tables were dropped
         async with test_engine.connect() as conn:
-            result = await conn.execute(
-                text(
-                    "SELECT EXISTS ("
-                    "  SELECT FROM information_schema.tables "
-                    "  WHERE table_name = '_m0_baseline_marker'"
-                    ");"
+            for table_name in [
+                "_m0_baseline_marker",
+                "idempotency_keys",
+                "events",
+                "deliveries",
+                "outbox",
+            ]:
+                result = await conn.execute(
+                    text(
+                        "SELECT EXISTS ("
+                        "  SELECT FROM information_schema.tables "
+                        f"  WHERE table_name = '{table_name}'"
+                        ");"
+                    )
                 )
-            )
-            assert result.scalar() is False
+                assert result.scalar() is False, f"Table {table_name} still exists after downgrade"
     finally:
         # Ensure complete cleanup of any migration/alembic state
         async with test_engine.begin() as conn:

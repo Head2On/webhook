@@ -70,6 +70,30 @@ class Settings(BaseSettings):
         description="Pool timeout in seconds",
     )
 
+    # M1 Gate 3: Idempotency, Retention & Ingestion
+    DEFAULT_RETENTION_DAYS: int = Field(
+        default=7,
+        ge=1,
+        le=60,
+        description="Default idempotency key retention in days (1-60 days)",
+    )
+    CLEANUP_GRACE_PERIOD_DAYS: int = Field(
+        default=7,
+        ge=1,
+        le=30,
+        description="Additional grace period in days before physical cleanup",
+    )
+    POSTGRES_LOCK_TIMEOUT_SECONDS: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=30.0,
+        description="Bounded PostgreSQL transaction lock timeout in seconds",
+    )
+    MAX_PAYLOAD_SIZE_BYTES: int = Field(
+        default=1_048_576,  # 1 MiB exactly
+        description="Maximum incoming webhook payload size in bytes (1 MiB)",
+    )
+
     # Redis (Integration boundary)
     REDIS_URL: str = Field(
         default="redis://localhost:6379/0",

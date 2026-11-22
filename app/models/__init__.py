@@ -1,8 +1,6 @@
-"""Persistence models representing database entities.
-
-Note: No business entities are defined in M0 per specification.
-"""
+"""Persistence models representing HookRelay database entities."""
 
 from app.db.base import Base
+from app.models.idempotency import Delivery, Event, IdempotencyKey, Outbox
 
-__all__ = ["Base"]
+__all__ = ["Base", "Delivery", "Event", "IdempotencyKey", "Outbox"]
