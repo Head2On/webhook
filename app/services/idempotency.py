@@ -22,6 +22,7 @@ from app.core.config import get_settings
 from app.core.exceptions import (
     IdempotencyFingerprintMismatchError,
 )
+from app.integrations.redis import RedisClient, redis_client
 from app.models.idempotency import IdempotencyKey
 from app.repositories.delivery import DeliveryRepository
 from app.repositories.event import EventRepository
@@ -47,8 +48,13 @@ class IngestionResult:
 class IdempotencyService:
     """Manages transactional idempotency lifecycle, concurrency recovery, and persistence."""
 
-    def __init__(self, settings_override: Any = None) -> None:
+    def __init__(
+        self,
+        settings_override: Any = None,
+        redis_client_override: RedisClient | None = None,
+    ) -> None:
         self.settings = settings_override or get_settings()
+        self.redis = redis_client_override or redis_client
 
     async def process_ingestion(
         self,
@@ -173,6 +179,20 @@ class IdempotencyService:
 
             # Step F: Commit all entities atomically before returning HTTP 202
             await session.commit()
+
+            # Step G: Signal Redis outbox stream asynchronously (non-blocking notification)
+            try:
+                await self.redis.signal_outbox_event(
+                    event_id=event.id,
+                    project_id=project_id,
+                    event_type=event_type,
+                )
+            except Exception as redis_exc:
+                logger.warning(
+                    "Post-commit Redis outbox signaling failed for event %s: %s",
+                    event.id,
+                    redis_exc,
+                )
 
             return IngestionResult(
                 status_code=202,

@@ -43,3 +43,43 @@ class OutboxRepository(BaseRepository[Outbox]):
         stmt = select(Outbox).where(Outbox.event_id == event_id)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def mark_dispatched(
+        self,
+        outbox_id: uuid.UUID,
+        processed_at: datetime | None = None,
+    ) -> bool:
+        """Mark an Outbox entry as dispatched."""
+        from sqlalchemy import update
+
+        stmt = (
+            update(Outbox)
+            .where(Outbox.id == outbox_id)
+            .values(
+                status="dispatched",
+                processed_at=processed_at or datetime.now(),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return bool(getattr(result, "rowcount", 0) > 0)
+
+    async def get_pending(self, limit: int = 100) -> list[Outbox]:
+        """Fetch pending outbox records ordered chronologically for delivery."""
+        stmt = (
+            select(Outbox)
+            .where(Outbox.status == "pending")
+            .order_by(Outbox.created_at.asc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def delete_by_event_ids(self, event_ids: list[uuid.UUID]) -> int:
+        """Delete outbox entries associated with the specified event IDs."""
+        if not event_ids:
+            return 0
+        from sqlalchemy import delete
+
+        stmt = delete(Outbox).where(Outbox.event_id.in_(event_ids))
+        result = await self.session.execute(stmt)
+        return int(getattr(result, "rowcount", 0))

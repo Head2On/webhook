@@ -101,3 +101,36 @@ class IdempotencyKeyRepository(BaseRepository[IdempotencyKey]):
         claim.response_body = response_body
         claim.response_headers = response_headers
         await self.session.flush()
+
+    async def clear_event_id_for_events(self, event_ids: list[uuid.UUID]) -> int:
+        """Disassociate event references to satisfy deferred FK constraints before deletion."""
+        if not event_ids:
+            return 0
+        stmt = (
+            update(IdempotencyKey)
+            .where(IdempotencyKey.event_id.in_(event_ids))
+            .values(event_id=None)
+        )
+        result = await self.session.execute(stmt)
+        return int(getattr(result, "rowcount", 0))
+
+    async def delete_by_ids(self, key_ids: list[uuid.UUID]) -> int:
+        """Delete idempotency keys by primary key list."""
+        if not key_ids:
+            return 0
+        from sqlalchemy import delete
+
+        stmt = delete(IdempotencyKey).where(IdempotencyKey.id.in_(key_ids))
+        result = await self.session.execute(stmt)
+        return int(getattr(result, "rowcount", 0))
+
+    async def purge_retired_keys(self, before: datetime) -> int:
+        """Physically delete idempotency keys that were retired before the given threshold."""
+        from sqlalchemy import delete
+
+        stmt = delete(IdempotencyKey).where(
+            IdempotencyKey.retired_at.is_not(None),
+            IdempotencyKey.retired_at < before,
+        )
+        result = await self.session.execute(stmt)
+        return int(getattr(result, "rowcount", 0))

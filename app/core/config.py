@@ -105,6 +105,10 @@ class Settings(BaseSettings):
         le=100,
         description="Redis connection pool size",
     )
+    REDIS_OUTBOX_STREAM: str = Field(
+        default="hookrelay:outbox:stream",
+        description="Redis stream name for outbox event notifications",
+    )
 
     @field_validator("DATABASE_URL", mode="after")
     @classmethod

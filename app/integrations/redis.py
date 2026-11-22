@@ -1,6 +1,10 @@
 """Redis integration boundary isolating Redis infrastructure."""
 
+from __future__ import annotations
+
 import logging
+import uuid
+from typing import Any
 
 from redis.asyncio import ConnectionPool, Redis
 
@@ -16,6 +20,7 @@ class RedisClient:
         settings = get_settings()
         self._url = url or settings.REDIS_URL
         self._max_connections = max_connections or settings.REDIS_POOL_SIZE
+        self._outbox_stream = settings.REDIS_OUTBOX_STREAM
         self._pool: ConnectionPool | None = None
         self._client: Redis | None = None
 
@@ -39,6 +44,51 @@ class RedisClient:
         except Exception as exc:
             logger.warning("Redis ping failed: %s", exc)
             return False
+
+    async def publish(self, channel: str, message: str) -> int:
+        """Publish a message to a Redis channel."""
+        try:
+            client = self._get_client()
+            return int(await client.publish(channel, message))
+        except Exception as exc:
+            logger.warning("Redis publish to channel '%s' failed: %s", channel, exc)
+            return 0
+
+    async def xadd(
+        self,
+        stream: str,
+        fields: dict[str, Any],
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> str | None:
+        """Append an entry to a Redis Stream."""
+        try:
+            client = self._get_client()
+            str_fields: dict[Any, Any] = {str(k): str(v) for k, v in fields.items()}
+            res = await client.xadd(stream, str_fields, maxlen=maxlen, approximate=approximate)
+            return str(res) if res is not None else None
+        except Exception as exc:
+            logger.warning("Redis xadd to stream '%s' failed: %s", stream, exc)
+            return None
+
+    async def signal_outbox_event(
+        self,
+        event_id: uuid.UUID | str,
+        project_id: uuid.UUID | str,
+        event_type: str,
+    ) -> bool:
+        """Signal downstream delivery workers that a new outbox event is ready.
+
+        Emits event notification to Redis stream to prevent workers from having
+        to poll PostgreSQL by default.
+        """
+        payload = {
+            "event_id": str(event_id),
+            "project_id": str(project_id),
+            "event_type": event_type,
+        }
+        res = await self.xadd(self._outbox_stream, payload)
+        return res is not None
 
     async def close(self) -> None:
         """Close connection pool."""
