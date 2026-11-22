@@ -8,8 +8,9 @@ Binds to the official RFC 8785 reference test suite authored by Anders Rundgren:
 
 Test Accounting Architecture:
 1. Category 1: Independent upstream reference-vector checks (6 whole documents).
-2. Category 2: Derived semantic / member assertions (25 individual members tested
-   against independently specified authoritative expected canonical bytes).
+2. Category 2: Derived member assertions (25 individual members tested
+   against independently specified authoritative expected canonical bytes,
+   with automated provenance verification matching each member against the pinned upstream corpus).
 3. Category 3: Number-specific checks (9 official ES6 IEEE-754 vectors + 5 values.json numbers).
 4. Category 4: Round-trip recycling checks (6 document idempotency assertions).
 5. Category 5: HookRelay-specific ingestion-policy checks (5 accepted, 1 excluded).
@@ -84,78 +85,118 @@ def load_official_documents() -> dict[str, DocumentPair]:
 
 OFFICIAL_DOCS = load_official_documents()
 
+
+class MemberVectorSpec(NamedTuple):
+    doc_name: str
+    member_id: str
+    member_key: str | int
+    in_val: Any
+    expected_canonical_bytes: bytes
+
+
 # -----------------------------------------------------------------------------
-# Category 2: Derived Member Vectors with INDEPENDENT Authoritative Bytes
-# Each test compares canonicalize_rfc8785(input) against an independently specified
-# raw expected byte literal derived directly from the official output files.
+# Category 2: Derived Member Vectors with Upstream Provenance Traceability
+# Each vector explicitly specifies:
+# 1. doc_name: Upstream reference document name.
+# 2. member_id: Stable human-readable identifier/slug for test identification.
+# 3. member_key: Exact lookup key (str) or index (int) in the source document.
+# 4. in_val: Standalone derived input value, automatedly validated against the
+#    pinned upstream corpus: OFFICIAL_DOCS[doc_name].parsed_input[member_key].
+# 5. expected_canonical_bytes: Independent raw byte literal derived directly
+#    from the authoritative upstream reference output document.
 # -----------------------------------------------------------------------------
-AUTHORITATIVE_MEMBER_VECTORS: list[tuple[str, str, Any, bytes]] = [
+AUTHORITATIVE_MEMBER_VECTORS: list[MemberVectorSpec] = [
     # french.json (4 members)
-    ("french.json", "peach", "This sorting order", b'"This sorting order"'),
-    (
+    MemberVectorSpec(
+        "french.json", "peach", "peach", "This sorting order", b'"This sorting order"'
+    ),
+    MemberVectorSpec(
         "french.json",
         "peche_acute",
+        "péché",
         "is wrong according to French",
         b'"is wrong according to French"',
     ),
-    (
+    MemberVectorSpec(
         "french.json",
         "peche_circumflex",
+        "pêche",
         "but canonicalization MUST",
         b'"but canonicalization MUST"',
     ),
-    ("french.json", "sin", "ignore locale", b'"ignore locale"'),
+    MemberVectorSpec("french.json", "sin", "sin", "ignore locale", b'"ignore locale"'),
     # weird.json (9 members)
-    ("weird.json", "euro_sign", "Euro Sign", b'"Euro Sign"'),
-    ("weird.json", "carriage_return", "Carriage Return", b'"Carriage Return"'),
-    ("weird.json", "newline", "Newline", b'"Newline"'),
-    ("weird.json", "digit_one", "One", b'"One"'),
-    ("weird.json", "control_char", "Control\x7f", b'"Control\x7f"'),
-    ("weird.json", "smiley_emoji", "Smiley", b'"Smiley"'),
-    (
+    MemberVectorSpec("weird.json", "euro_sign", "\u20ac", "Euro Sign", b'"Euro Sign"'),
+    MemberVectorSpec(
+        "weird.json", "carriage_return", "\r", "Carriage Return", b'"Carriage Return"'
+    ),
+    MemberVectorSpec("weird.json", "newline", "\n", "Newline", b'"Newline"'),
+    MemberVectorSpec("weird.json", "digit_one", "1", "One", b'"One"'),
+    MemberVectorSpec("weird.json", "control_char", "\u0080", "Control\x7f", b'"Control\x7f"'),
+    MemberVectorSpec("weird.json", "smiley_emoji", "\U0001f602", "Smiley", b'"Smiley"'),
+    MemberVectorSpec(
         "weird.json",
         "latin_small_o",
+        "\u00f6",
         "Latin Small Letter O With Diaeresis",
         b'"Latin Small Letter O With Diaeresis"',
     ),
-    (
+    MemberVectorSpec(
         "weird.json",
         "hebrew_dalet",
+        "\ufb33",
         "Hebrew Letter Dalet With Dagesh",
         b'"Hebrew Letter Dalet With Dagesh"',
     ),
-    ("weird.json", "browser_challenge", "Browser Challenge", b'"Browser Challenge"'),
+    MemberVectorSpec(
+        "weird.json", "browser_challenge", "</script>", "Browser Challenge", b'"Browser Challenge"'
+    ),
     # structures.json (6 members)
-    ("structures.json", "empty_key", "empty", b'"empty"'),
-    (
+    MemberVectorSpec("structures.json", "empty_key", "", "empty", b'"empty"'),
+    MemberVectorSpec(
         "structures.json",
         "key_1",
+        "1",
         {"f": {"f": "hi", "F": 5}, "\n": 56.0},
         b'{"\\n":56,"f":{"F":5,"f":"hi"}}',
     ),
-    ("structures.json", "key_10", {}, b"{}"),
-    ("structures.json", "key_111", [{"e": "yes", "E": "no"}], b'[{"E":"no","e":"yes"}]'),
-    ("structures.json", "key_A", {}, b"{}"),
-    ("structures.json", "key_a", {}, b"{}"),
+    MemberVectorSpec("structures.json", "key_10", "10", {}, b"{}"),
+    MemberVectorSpec(
+        "structures.json", "key_111", "111", [{"e": "yes", "E": "no"}], b'[{"E":"no","e":"yes"}]'
+    ),
+    MemberVectorSpec("structures.json", "key_A", "A", {}, b"{}"),
+    MemberVectorSpec("structures.json", "key_a", "a", {}, b"{}"),
     # unicode.json (1 member)
-    ("unicode.json", "unnormalized", "A\u030a", b'"A\xcc\x8a"'),
+    MemberVectorSpec(
+        "unicode.json", "unnormalized", "Unnormalized Unicode", "A\u030a", b'"A\xcc\x8a"'
+    ),
     # values.json (3 members)
-    (
+    MemberVectorSpec(
         "values.json",
+        "numbers",
         "numbers",
         [333333333.33333329, 1e30, 4.50, 2e-3, 0.000000000000000000000000001],
         b"[333333333.3333333,1e+30,4.5,0.002,1e-27]",
     ),
-    (
+    MemberVectorSpec(
         "values.json",
+        "string",
         "string",
         "\u20ac$\u000f\u000aA'\u0042\u0022\u005c\\\"/",
         b'"\xe2\x82\xac$\\u000f\\nA\'B\\"\\\\\\\\\\"/"',
     ),
-    ("values.json", "literals", [None, True, False], b"[null,true,false]"),
+    MemberVectorSpec(
+        "values.json", "literals", "literals", [None, True, False], b"[null,true,false]"
+    ),
     # arrays.json (2 members)
-    ("arrays.json", "index_0", 56, b"56"),
-    ("arrays.json", "index_1", {"d": True, "10": None, "1": []}, b'{"1":[],"10":null,"d":true}'),
+    MemberVectorSpec("arrays.json", "index_0", 0, 56, b"56"),
+    MemberVectorSpec(
+        "arrays.json",
+        "index_1",
+        1,
+        {"d": True, "10": None, "1": []},
+        b'{"1":[],"10":null,"d":true}',
+    ),
 ]
 
 # -----------------------------------------------------------------------------
@@ -183,7 +224,7 @@ VALUES_JSON_NESTED_NUMBERS: list[tuple[float, bytes]] = [
 
 
 class TestOfficialCorpusProvenanceAndAccounting:
-    """Verifies provenance, file presence, and exact vector category counts."""
+    """Verifies provenance, file presence, exact vector category counts, and member traceability."""
 
     def test_corpus_provenance_and_file_completeness(self) -> None:
         """Verify provenance and confirm all 6 reference corpus files exist."""
@@ -204,6 +245,36 @@ class TestOfficialCorpusProvenanceAndAccounting:
         assert len(AUTHORITATIVE_MEMBER_VECTORS) == 25
         assert len(OFFICIAL_ES6_NUMBER_VECTORS) == 9
         assert len(VALUES_JSON_NESTED_NUMBERS) == 5
+
+    def test_member_vectors_traceability_to_upstream_corpus(self) -> None:
+        """Automated verification proving each of the 25 member vectors matches
+        its source corpus entry and that all members across all 6 upstream reference
+        documents are accounted for.
+        """
+        verified_count = 0
+        for vec in AUTHORITATIVE_MEMBER_VECTORS:
+            assert vec.doc_name in OFFICIAL_DOCS, f"Unknown document {vec.doc_name}"
+            corpus_doc = OFFICIAL_DOCS[vec.doc_name].parsed_input
+            if isinstance(corpus_doc, dict):
+                assert vec.member_key in corpus_doc, f"Key {vec.member_key!r} not in {vec.doc_name}"
+            elif isinstance(corpus_doc, list):
+                assert isinstance(vec.member_key, int) and 0 <= vec.member_key < len(corpus_doc), (
+                    f"Index {vec.member_key!r} out of range in {vec.doc_name}"
+                )
+            assert corpus_doc[vec.member_key] == vec.in_val, (
+                f"Mismatch for {vec.doc_name} member '{vec.member_id}' (key {vec.member_key!r}): "
+                f"{corpus_doc[vec.member_key]!r} != {vec.in_val!r}"
+            )
+            verified_count += 1
+
+        assert verified_count == 25
+
+        # Also verify 100% member coverage: sum of members in all 6 official documents equals 25
+        total_corpus_members = sum(
+            len(doc.parsed_input) if isinstance(doc.parsed_input, (dict, list)) else 1
+            for doc in OFFICIAL_DOCS.values()
+        )
+        assert total_corpus_members == 25
 
 
 class TestCategory1UpstreamReferenceVectorChecks:
@@ -236,16 +307,34 @@ class TestCategory2DerivedMemberAssertions:
 
     Compares canonicalize_rfc8785(in_val) against an INDEPENDENT authoritative byte literal.
     No circular call to canonicalize_rfc8785 is used on the expected value.
+    Each vector explicitly records its source document name, member ID label, and exact upstream
+    member selector key/index, with automated verification proving each vector matches
+    its source corpus entry.
     """
 
     @pytest.mark.parametrize(
-        ("doc_name", "member_id", "in_val", "expected_canonical_bytes"),
+        ("doc_name", "member_id", "member_key", "in_val", "expected_canonical_bytes"),
         AUTHORITATIVE_MEMBER_VECTORS,
+        ids=[f"{v.doc_name}::{v.member_id}" for v in AUTHORITATIVE_MEMBER_VECTORS],
     )
     def test_individual_member_vector_against_independent_expected_bytes(
-        self, doc_name: str, member_id: str, in_val: Any, expected_canonical_bytes: bytes
+        self,
+        doc_name: str,
+        member_id: str,
+        member_key: str | int,
+        in_val: Any,
+        expected_canonical_bytes: bytes,
     ) -> None:
-        """Assert each member serializes to its authoritative expected canonical byte sequence."""
+        """Assert each member serializes to its authoritative expected canonical byte sequence,
+        and automatedly verify provenance against the pinned upstream input corpus."""
+        # 1. Automated provenance verification: prove input value matches pinned upstream corpus
+        corpus_val = OFFICIAL_DOCS[doc_name].parsed_input[member_key]
+        assert in_val == corpus_val, (
+            f"Traceability mismatch for {doc_name} member '{member_id}' (key: {member_key!r}): "
+            f"vector input {in_val!r} != corpus {corpus_val!r}"
+        )
+
+        # 2. Canonicalize and verify against independent authoritative expected bytes
         actual_canonical_bytes = canonicalize_rfc8785(in_val)
         assert actual_canonical_bytes == expected_canonical_bytes
 
