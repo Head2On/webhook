@@ -247,34 +247,57 @@ class TestOfficialCorpusProvenanceAndAccounting:
         assert len(VALUES_JSON_NESTED_NUMBERS) == 5
 
     def test_member_vectors_traceability_to_upstream_corpus(self) -> None:
-        """Automated verification proving each of the 25 member vectors matches
-        its source corpus entry and that all members across all 6 upstream reference
-        documents are accounted for.
+        """Automated verification proving exact selector-set equality and value traceability:
+
+        1. Build the expected set of all (doc_name, member_key) selectors from every member
+           in the six upstream documents.
+        2. Build the actual set of (vec.doc_name, vec.member_key) selectors from
+           AUTHORITATIVE_MEMBER_VECTORS.
+        3. Assert that the actual selector count equals the vector-list length, proving
+           there are no duplicates.
+        4. Assert that the actual selector set exactly equals the expected selector set,
+           proving complete, unique 100% member coverage with no missing or extra members.
+        5. Verify that each vector's recorded value matches the upstream corpus parsed value.
         """
-        verified_count = 0
-        for vec in AUTHORITATIVE_MEMBER_VECTORS:
-            assert vec.doc_name in OFFICIAL_DOCS, f"Unknown document {vec.doc_name}"
-            corpus_doc = OFFICIAL_DOCS[vec.doc_name].parsed_input
-            if isinstance(corpus_doc, dict):
-                assert vec.member_key in corpus_doc, f"Key {vec.member_key!r} not in {vec.doc_name}"
-            elif isinstance(corpus_doc, list):
-                assert isinstance(vec.member_key, int) and 0 <= vec.member_key < len(corpus_doc), (
-                    f"Index {vec.member_key!r} out of range in {vec.doc_name}"
-                )
-            assert corpus_doc[vec.member_key] == vec.in_val, (
-                f"Mismatch for {vec.doc_name} member '{vec.member_id}' (key {vec.member_key!r}): "
-                f"{corpus_doc[vec.member_key]!r} != {vec.in_val!r}"
-            )
-            verified_count += 1
+        # 1. Build expected set of all (doc_name, member_key) selectors from all 6 documents
+        expected_selectors: set[tuple[str, str | int]] = set()
+        for doc_name, doc in OFFICIAL_DOCS.items():
+            if isinstance(doc.parsed_input, dict):
+                for key in doc.parsed_input.keys():
+                    expected_selectors.add((doc_name, key))
+            elif isinstance(doc.parsed_input, list):
+                for idx in range(len(doc.parsed_input)):
+                    expected_selectors.add((doc_name, idx))
+            else:
+                raise AssertionError(f"Unexpected document root type in {doc_name}")
 
-        assert verified_count == 25
+        assert len(expected_selectors) == 25
 
-        # Also verify 100% member coverage: sum of members in all 6 official documents equals 25
-        total_corpus_members = sum(
-            len(doc.parsed_input) if isinstance(doc.parsed_input, (dict, list)) else 1
-            for doc in OFFICIAL_DOCS.values()
+        # 2. Build actual selector list and set from AUTHORITATIVE_MEMBER_VECTORS
+        actual_selectors = [(vec.doc_name, vec.member_key) for vec in AUTHORITATIVE_MEMBER_VECTORS]
+        actual_selector_set = set(actual_selectors)
+
+        # 3. Assert actual selector count equals vector-list length (proves no duplicates)
+        assert len(actual_selectors) == len(AUTHORITATIVE_MEMBER_VECTORS)
+        assert len(actual_selector_set) == len(AUTHORITATIVE_MEMBER_VECTORS), (
+            f"Duplicate member selectors detected: {len(AUTHORITATIVE_MEMBER_VECTORS)} vectors "
+            f"vs {len(actual_selector_set)} unique selectors"
         )
-        assert total_corpus_members == 25
+
+        # 4. Assert actual selector set exactly equals expected selector set (proves no missing)
+        assert actual_selector_set == expected_selectors, (
+            f"Selector set mismatch:\n"
+            f"Missing selectors: {expected_selectors - actual_selector_set}\n"
+            f"Unexpected selectors: {actual_selector_set - expected_selectors}"
+        )
+
+        # 5. Value equality: verify each vector's recorded value matches the corpus value
+        for vec in AUTHORITATIVE_MEMBER_VECTORS:
+            corpus_doc = OFFICIAL_DOCS[vec.doc_name].parsed_input
+            assert corpus_doc[vec.member_key] == vec.in_val, (
+                f"Value mismatch for {vec.doc_name} member '{vec.member_id}' "
+                f"(key {vec.member_key!r}): {corpus_doc[vec.member_key]!r} != {vec.in_val!r}"
+            )
 
 
 class TestCategory1UpstreamReferenceVectorChecks:
