@@ -22,6 +22,58 @@ class InfrastructureError(HookRelayException):
 
 
 # =============================================================================
+# Ingestion & Idempotency Domain Exceptions (M1 Gate 3 / HR-IDEM-001 - HR-IDEM-002)
+# =============================================================================
+
+
+class IdempotencyError(HookRelayException):
+    """Base exception for idempotency engine errors."""
+
+    error_code: str = "IDEMPOTENCY_ERROR"
+
+    def __init__(self, message: str, error_code: str | None = None) -> None:
+        super().__init__(message)
+        if error_code is not None:
+            self.error_code = error_code
+
+
+class IdempotencyFingerprintMismatchError(IdempotencyError):
+    """Raised when active idempotency key reused with different fingerprint (HTTP 409)."""
+
+    error_code = "IDEMPOTENCY_KEY_FINGERPRINT_MISMATCH"
+
+    def __init__(
+        self,
+        message: str = "Idempotency key reused with a different payload fingerprint.",
+    ) -> None:
+        super().__init__(message=message, error_code=self.error_code)
+
+
+class PayloadTooLargeError(HookRelayException):
+    """Raised when payload exceeds streaming size limit of 1 MiB (HTTP 413)."""
+
+    error_code = "PAYLOAD_TOO_LARGE"
+
+    def __init__(
+        self,
+        message: str = "Payload exceeds maximum allowed size of 1 MiB.",
+    ) -> None:
+        super().__init__(message)
+
+
+class UnsupportedMediaTypeError(HookRelayException):
+    """Raised when request has unsupported content-type or compression (HTTP 415)."""
+
+    error_code = "UNSUPPORTED_MEDIA_TYPE"
+
+    def __init__(
+        self,
+        message: str = "Unsupported Content-Type or Content-Encoding.",
+    ) -> None:
+        super().__init__(message)
+
+
+# =============================================================================
 # Canonicalization Domain Exceptions (M1 Gate 2 / HR-CANON-001 - HR-CANON-004)
 # =============================================================================
 
