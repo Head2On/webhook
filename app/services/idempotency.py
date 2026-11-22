@@ -7,12 +7,11 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
-    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -20,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import get_settings
 from app.core.exceptions import (
+    IdempotencyError,
     IdempotencyFingerprintMismatchError,
 )
 from app.integrations.redis import RedisClient, redis_client
@@ -107,10 +107,7 @@ class IdempotencyService:
                         session=session,
                         project_id=project_id,
                         idempotency_key=idempotency_key,
-                        event_type=event_type,
-                        raw_payload_bytes=raw_payload_bytes,
                         incoming_fingerprint=fingerprint,
-                        retention_days=retention_days,
                     )
             else:
                 # Active non-expired key: evaluate fingerprint
@@ -204,10 +201,14 @@ class IdempotencyService:
                 response_headers={},
             )
 
-        except (IntegrityError, DBAPIError) as exc:
-            # Trapped uniqueness conflict on idx_idempotency_project_key_active
+        except IntegrityError as exc:
+            if not self.is_idempotency_unique_violation(exc):
+                await session.rollback()
+                raise
+            # Trapped uniqueness conflict specifically on idx_idempotency_project_key_active
             logger.warning(
-                "Integrity conflict on key %s for project %s: %s; initiating recovery",
+                "Idempotency unique constraint violation on key %s for project %s: %s; "
+                "initiating bounded recovery",
                 idempotency_key,
                 project_id,
                 exc,
@@ -217,11 +218,37 @@ class IdempotencyService:
                 session=session,
                 project_id=project_id,
                 idempotency_key=idempotency_key,
-                event_type=event_type,
-                raw_payload_bytes=raw_payload_bytes,
                 incoming_fingerprint=fingerprint,
-                retention_days=retention_days,
             )
+
+    @staticmethod
+    def is_idempotency_unique_violation(exc: Exception) -> bool:
+        """Check if exception is strictly SQLSTATE 23505 on idx_idempotency_project_key_active."""
+        if not isinstance(exc, IntegrityError):
+            return False
+        orig = getattr(exc, "orig", None)
+        if orig is None:
+            return False
+        sqlstate = getattr(orig, "sqlstate", getattr(orig, "pgcode", None))
+        if str(sqlstate) != "23505":
+            return False
+        constraint = getattr(orig, "constraint_name", None)
+        if constraint == "idx_idempotency_project_key_active":
+            return True
+        if "idx_idempotency_project_key_active" in str(exc):
+            return True
+        return False
+
+    def _extract_engine(self, session: AsyncSession) -> AsyncEngine:
+        """Extract AsyncEngine from AsyncSession bind safely to ensure clean pool allocation."""
+        bind: Any = getattr(session, "bind", None)
+        if isinstance(bind, AsyncEngine):
+            return bind
+        if hasattr(bind, "engine") and isinstance(bind.engine, AsyncEngine):
+            return bind.engine
+        from app.db.session import engine as default_engine
+
+        return default_engine
 
     def _evaluate_active_key(
         self,
@@ -259,55 +286,41 @@ class IdempotencyService:
         session: AsyncSession,
         project_id: uuid.UUID,
         idempotency_key: str,
-        event_type: str,
-        raw_payload_bytes: bytes,
         incoming_fingerprint: str,
-        retention_days: int | None = None,
     ) -> IngestionResult:
-        """Recover from a uniqueness conflict by opening a clean transaction and re-reading."""
-        bind = cast(AsyncEngine | AsyncConnection, session.get_bind())
+        """Recover from a 23505 uniqueness conflict by reading the winning record.
+
+        Polls in a bounded loop up to the bounded lock timeout. Evaluates
+        fingerprint to return HTTP 200 or raise HTTP 409. Never performs
+        recursive ingestion retries.
+        """
+        engine = self._extract_engine(session)
         factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            bind=bind,
+            bind=engine,
             class_=AsyncSession,
             expire_on_commit=False,
         )
 
-        for _ in range(20):
+        max_attempts = max(10, int(self.settings.POSTGRES_LOCK_TIMEOUT_SECONDS / 0.05))
+        delay = 0.05
+
+        for _ in range(max_attempts):
             async with factory() as fresh_session:
                 repo = IdempotencyKeyRepository(fresh_session)
                 active_key = await repo.get_active(project_id, idempotency_key)
 
-                if active_key is not None:
-                    if active_key.response_body is not None:
-                        return self._evaluate_active_key(
-                            active_key=active_key,
-                            idempotency_key=idempotency_key,
-                            incoming_fingerprint=incoming_fingerprint,
-                        )
-                    await asyncio.sleep(0.02)
-                    continue
+                if active_key is not None and active_key.response_body is not None:
+                    return self._evaluate_active_key(
+                        active_key=active_key,
+                        idempotency_key=idempotency_key,
+                        incoming_fingerprint=incoming_fingerprint,
+                    )
 
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(delay)
 
-        # Fallback / retry fresh ingestion if no active key exists
-        async with factory() as fallback_session:
-            repo = IdempotencyKeyRepository(fallback_session)
-            active_key = await repo.get_active(project_id, idempotency_key)
-            if active_key is not None:
-                return self._evaluate_active_key(
-                    active_key=active_key,
-                    idempotency_key=idempotency_key,
-                    incoming_fingerprint=incoming_fingerprint,
-                )
-            return await self.process_ingestion(
-                session=fallback_session,
-                project_id=project_id,
-                idempotency_key=idempotency_key,
-                event_type=event_type,
-                raw_payload_bytes=raw_payload_bytes,
-                fingerprint=incoming_fingerprint,
-                retention_days=retention_days,
-            )
+        raise IdempotencyError(
+            f"Concurrency conflict recovery timed out waiting for key '{idempotency_key}'."
+        )
 
 
 idempotency_service = IdempotencyService()

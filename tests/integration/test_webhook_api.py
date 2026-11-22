@@ -251,3 +251,30 @@ async def test_post_webhook_missing_idempotency_key_returns_400(
     )
     assert response.status_code == 400
     assert response.json()["error"] == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_streaming_payload_pre_append_limit_rejection() -> None:
+    """Verify read_streaming_payload checks chunk boundary BEFORE appending to buffer."""
+    from unittest.mock import AsyncMock
+
+    from fastapi import Request
+
+    from app.api.v1.webhooks import read_streaming_payload
+    from app.core.exceptions import PayloadTooLargeError
+
+    chunk1 = b"x" * 500_000
+    chunk2 = b"x" * 600_000
+
+    async def mock_stream():
+        yield chunk1
+        yield chunk2
+
+    mock_request = AsyncMock(spec=Request)
+    mock_request.headers = {"content-type": "application/json"}
+    mock_request.stream = mock_stream
+
+    with pytest.raises(PayloadTooLargeError) as exc_info:
+        await read_streaming_payload(mock_request, max_size_bytes=1_048_576)
+
+    assert "exceeds maximum allowed limit" in str(exc_info.value)

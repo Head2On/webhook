@@ -12,7 +12,11 @@ from app.services.retention import retention_service
 
 
 def test_calculate_cleanup_cutoff_validation() -> None:
-    """Verify retention calculation and range validation (1-60 days)."""
+    """Verify retention calculation, fixed 7-day grace period, and range validation (1-60 days)."""
+    from app.services.retention import FIXED_CLEANUP_GRACE_PERIOD_DAYS
+
+    assert FIXED_CLEANUP_GRACE_PERIOD_DAYS == 7
+
     now = datetime(2026, 11, 22, 12, 0, 0, tzinfo=UTC)
 
     # 1. Default (7 days retention + 7 days grace = 14 days)

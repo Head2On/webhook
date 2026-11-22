@@ -79,9 +79,8 @@ class Settings(BaseSettings):
     )
     CLEANUP_GRACE_PERIOD_DAYS: int = Field(
         default=7,
-        ge=1,
-        le=30,
-        description="Additional grace period in days before physical cleanup",
+        frozen=True,
+        description="Fixed 7-day grace period before physical cleanup",
     )
     POSTGRES_LOCK_TIMEOUT_SECONDS: float = Field(
         default=2.0,

@@ -254,6 +254,226 @@ async def test_concurrent_conflicting_fingerprint_race(
 
 
 @pytest.mark.asyncio
+async def test_deterministic_concurrency_identical_fingerprint(
+    test_engine: AsyncEngine,
+) -> None:
+    """Verify deterministic 23505 conflict resolution with identical fingerprint.
+
+    Session 1 inserts an uncommitted claim. Session 2 attempts ingestion and
+    blocks on PostgreSQL unique index. When Session 1 commits, Session 2 catches
+    SQLSTATE 23505, rolls back, re-reads Session 1's committed row, and returns 200.
+    """
+    session_factory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    project_id = uuid.uuid4()
+    key = "det_concurrent_200_" + uuid.uuid4().hex[:8]
+    raw_payload = b'{"order": "det_200"}'
+    fingerprint = "jcs-rfc8785-v1:" + "d" * 64
+    now = datetime.now(UTC)
+
+    async with session_factory() as s1, session_factory() as s2:
+        # 1. S1 claims key inside uncommitted transaction
+        claim_1 = IdempotencyKey(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            idempotency_key=key,
+            fingerprint=fingerprint,
+            created_at=now,
+            expires_at=now + timedelta(days=7),
+        )
+        s1.add(claim_1)
+        await s1.flush()
+
+        # 2. S2 attempts ingestion on the same key and blocks waiting on S1's index lock
+        s2_task = asyncio.create_task(
+            idempotency_service.process_ingestion(
+                session=s2,
+                project_id=project_id,
+                idempotency_key=key,
+                event_type="order.placed",
+                raw_payload_bytes=raw_payload,
+                fingerprint=fingerprint,
+            )
+        )
+
+        # Allow S2 coroutine to execute up to PostgreSQL index lock
+        await asyncio.sleep(0.05)
+
+        # 3. S1 creates Event, Delivery, Outbox, completes claim, and commits
+        from app.repositories.delivery import DeliveryRepository
+        from app.repositories.event import EventRepository
+        from app.repositories.idempotency import IdempotencyKeyRepository
+        from app.repositories.outbox import OutboxRepository
+
+        event = await EventRepository(s1).create(
+            project_id=project_id,
+            idempotency_key_id=claim_1.id,
+            event_type="order.placed",
+            raw_payload_bytes=raw_payload,
+            payload_hash=fingerprint,
+            created_at=now,
+        )
+        await DeliveryRepository(s1).create(
+            project_id=project_id,
+            event_id=event.id,
+            status="pending",
+            created_at=now,
+        )
+        await OutboxRepository(s1).create(
+            event_id=event.id,
+            payload={"event_id": str(event.id)},
+            status="pending",
+            created_at=now,
+        )
+        response_body = {
+            "event_id": str(event.id),
+            "status": "accepted",
+            "idempotency_key": key,
+            "fingerprint": fingerprint,
+            "created_at": now.isoformat(),
+        }
+        await IdempotencyKeyRepository(s1).complete_claim(
+            claim=claim_1,
+            event_id=event.id,
+            response_status_code=202,
+            response_body=response_body,
+        )
+        await s1.commit()
+
+        # 4. S2 unblocks, catches 23505, recovers by reading S1's committed row, returns 200
+        res_2 = await s2_task
+        assert res_2.status_code == 200
+        assert res_2.is_replay is True
+        assert res_2.response_headers.get("Idempotent-Replay") == "true"
+        assert res_2.response_body == response_body
+        assert res_2.event_id == event.id
+
+    # 5. Verify database contains exactly 1 Event
+    async with session_factory() as verify_session:
+        events_stmt = select(Event).where(Event.project_id == project_id)
+        events_res = await verify_session.execute(events_stmt)
+        events = events_res.scalars().all()
+        assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_deterministic_concurrency_conflicting_fingerprint(
+    test_engine: AsyncEngine,
+) -> None:
+    """Verify deterministic 23505 conflict resolution with conflicting fingerprint.
+
+    Session 1 inserts an uncommitted claim. Session 2 attempts ingestion with a
+    different fingerprint and blocks. When Session 1 commits, Session 2 catches
+    SQLSTATE 23505, rolls back, re-reads S1's committed row, detects fingerprint
+    mismatch, and raises IdempotencyFingerprintMismatchError (HTTP 409).
+    """
+    session_factory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    project_id = uuid.uuid4()
+    key = "det_concurrent_409_" + uuid.uuid4().hex[:8]
+    payload_1 = b'{"runner": "first"}'
+    fingerprint_1 = "jcs-rfc8785-v1:" + "1" * 64
+    payload_2 = b'{"runner": "second"}'
+    fingerprint_2 = "jcs-rfc8785-v1:" + "2" * 64
+    now = datetime.now(UTC)
+
+    async with session_factory() as s1, session_factory() as s2:
+        # 1. S1 claims key inside uncommitted transaction
+        claim_1 = IdempotencyKey(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            idempotency_key=key,
+            fingerprint=fingerprint_1,
+            created_at=now,
+            expires_at=now + timedelta(days=7),
+        )
+        s1.add(claim_1)
+        await s1.flush()
+
+        # 2. S2 attempts ingestion with conflicting fingerprint and blocks
+        s2_task = asyncio.create_task(
+            idempotency_service.process_ingestion(
+                session=s2,
+                project_id=project_id,
+                idempotency_key=key,
+                event_type="race.event",
+                raw_payload_bytes=payload_2,
+                fingerprint=fingerprint_2,
+            )
+        )
+
+        await asyncio.sleep(0.05)
+
+        # 3. S1 creates Event and commits
+        from app.repositories.delivery import DeliveryRepository
+        from app.repositories.event import EventRepository
+        from app.repositories.idempotency import IdempotencyKeyRepository
+        from app.repositories.outbox import OutboxRepository
+
+        event = await EventRepository(s1).create(
+            project_id=project_id,
+            idempotency_key_id=claim_1.id,
+            event_type="race.event",
+            raw_payload_bytes=payload_1,
+            payload_hash=fingerprint_1,
+            created_at=now,
+        )
+        await DeliveryRepository(s1).create(
+            project_id=project_id,
+            event_id=event.id,
+            status="pending",
+            created_at=now,
+        )
+        await OutboxRepository(s1).create(
+            event_id=event.id,
+            payload={"event_id": str(event.id)},
+            status="pending",
+            created_at=now,
+        )
+        await IdempotencyKeyRepository(s1).complete_claim(
+            claim=claim_1,
+            event_id=event.id,
+            response_status_code=202,
+            response_body={"status": "accepted", "event_id": str(event.id)},
+        )
+        await s1.commit()
+
+        # 4. S2 unblocks, catches 23505, re-reads, and raises 409
+        with pytest.raises(IdempotencyFingerprintMismatchError) as exc_info:
+            await s2_task
+
+        assert exc_info.value.error_code == "IDEMPOTENCY_KEY_FINGERPRINT_MISMATCH"
+
+    # 5. Verify database contains exactly 1 Event
+    async with session_factory() as verify_session:
+        events_stmt = select(Event).where(Event.project_id == project_id)
+        events_res = await verify_session.execute(events_stmt)
+        assert len(events_res.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_idempotency_unique_violation_is_not_recovered(
+    db_session: AsyncSession,
+) -> None:
+    """Verify is_idempotency_unique_violation strictly filters for 23505 on active key index."""
+    from sqlalchemy.exc import IntegrityError
+
+    # Test arbitrary IntegrityError
+    arbitrary_exc = IntegrityError(
+        "some unrelated statement",
+        params={},
+        orig=Exception("Other error"),
+    )
+    assert idempotency_service.is_idempotency_unique_violation(arbitrary_exc) is False
+
+
+@pytest.mark.asyncio
 async def test_expired_key_replacement_creates_new_event(
     db_session: AsyncSession,
 ) -> None:

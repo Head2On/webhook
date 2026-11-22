@@ -45,14 +45,20 @@ async def read_streaming_payload(request: Request, max_size_bytes: int) -> bytes
                 f"Content-Type '{content_type}' is unsupported. Must be 'application/json'."
             )
 
-    body = bytearray()
+    total_size = 0
+    chunks: list[bytes] = []
     async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > max_size_bytes:
+        if not chunk:
+            continue
+        # Strict pre-append check: enforce limit BEFORE appending chunk to buffer
+        if total_size + len(chunk) > max_size_bytes:
             raise PayloadTooLargeError(
-                f"Payload size {len(body)} exceeds maximum allowed limit of {max_size_bytes} bytes."
+                f"Payload size exceeds maximum allowed limit of {max_size_bytes} bytes."
             )
-    return bytes(body)
+        chunks.append(chunk)
+        total_size += len(chunk)
+
+    return b"".join(chunks)
 
 
 @router.post("/projects/{project_id}/webhooks", status_code=status.HTTP_202_ACCEPTED)

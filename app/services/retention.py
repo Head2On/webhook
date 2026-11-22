@@ -15,6 +15,8 @@ from app.repositories.outbox import OutboxRepository
 
 logger = logging.getLogger(__name__)
 
+FIXED_CLEANUP_GRACE_PERIOD_DAYS: int = 7
+
 
 class RetentionService:
     """Manages event payload retention and physical cleanup lifecycle."""
@@ -25,13 +27,12 @@ class RetentionService:
     def calculate_cleanup_cutoff(
         self,
         retention_days: int | None = None,
-        grace_period_days: int | None = None,
         as_of: datetime | None = None,
     ) -> datetime:
         """Calculate physical cleanup cutoff timestamp.
 
         Enforces retention range: 1-60 days (default 7 days).
-        Physical cleanup occurs after an additional 7-day grace period.
+        Physical cleanup occurs after an additional fixed 7-day grace period.
         """
         eff_retention = (
             retention_days if retention_days is not None else self.settings.DEFAULT_RETENTION_DAYS
@@ -41,12 +42,7 @@ class RetentionService:
                 f"Retention days {eff_retention} is invalid. Must be between 1 and 60 days."
             )
 
-        eff_grace = (
-            grace_period_days
-            if grace_period_days is not None
-            else self.settings.CLEANUP_GRACE_PERIOD_DAYS
-        )
-        total_days = eff_retention + eff_grace
+        total_days = eff_retention + FIXED_CLEANUP_GRACE_PERIOD_DAYS
         base_time = as_of or datetime.now(UTC)
         return base_time - timedelta(days=total_days)
 
