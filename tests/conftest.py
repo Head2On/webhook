@@ -60,7 +60,7 @@ def test_db_url() -> str:
 @pytest_asyncio.fixture
 async def test_engine(test_db_url: str) -> AsyncGenerator[AsyncEngine]:
     """Create test database engine connecting to real PostgreSQL."""
-    engine = create_async_engine(test_db_url, echo=False)
+    engine = create_async_engine(test_db_url, echo=False, pool_pre_ping=True)
 
     # Ensure clean slate before test
     async with engine.begin() as conn:
